@@ -8,6 +8,7 @@ import com.google.common.collect.ImmutableMap;
 import freemarker.template.Configuration;
 import joptsimple.OptionParser;
 import joptsimple.OptionSet;
+import org.checkerframework.checker.units.qual.A;
 import spark.ExceptionHandler;
 import spark.ModelAndView;
 import spark.Request;
@@ -55,7 +56,7 @@ public final class Main {
       runSparkServer((int) options.valueOf("port"));
     }
 
-    List<List<String>> stars = new ArrayList<>();
+    List<Star> stars = new ArrayList<>();
 
     // TODO: Add your REPL here!
     try (BufferedReader br = new BufferedReader(new InputStreamReader(System.in))) {
@@ -80,35 +81,25 @@ public final class Main {
               break;
 
             case "stars":
+              // if incorrect inputs
               if (arguments.length != 2) {
                 System.out.println("ERROR: Invalid input for REPL");
                 continue;
               }
-              stars = new ArrayList<>();
-              BufferedReader reader = new BufferedReader(new FileReader(arguments[1]));
-              reader.readLine(); // to skip the property names
-              String line;
-              while ((line = reader.readLine()) != null) {
-                String[] values = line.split(",");
-                if (values.length != 5) {
-                  System.out.println("ERROR: Invalid input for REPL");
-                  continue;
-                }
-                stars.add(Arrays.asList(values));
-              }
-              System.out.println(stars);
+              stars = this.populateStars(arguments[1]); // populate stars
+
               break;
             case "naive_neighbors":
-
               if (arguments.length < 3) {
                 System.out.println("ERROR: Invalid input for REPL");
                 continue;
               }
               int numNeighbors = Integer.parseInt(arguments[1]);
+              // if 0 neighbors, just return
               if (numNeighbors == 0) {
                 continue;
               }
-              boolean digit = false;
+              boolean digit = false; // to check which command
               Double[] origin = null;
               String name = "";
               if (Character.isDigit(arguments[2].charAt(0))) { // if <k> <x> <y> <z>
@@ -118,6 +109,7 @@ public final class Main {
               } else {
                 digit = false;
 
+                // get name of star
                 for (int i = 2; i < arguments.length; i++) {
                   name = name + arguments[i];
                   if (i < arguments.length - 1) {
@@ -126,49 +118,19 @@ public final class Main {
                 }
                 name = name.replaceAll("\"", ""); // replace quotes
 
-                for (List<String> star : stars) {
-                  if (star.get(1).equals(name)) {
-                    origin = new Double[]{Double.parseDouble(star.get(2)), Double.parseDouble(star.get(3)), Double.parseDouble(star.get(4))};
+                // get origin of star
+                for (Star star : stars) {
+                  if (star.getName().equals(name)) {
+                    origin = new Double[]{star.getX(), star.getY(), star.getZ()};
                     break;
                   }
                 }
               }
-              PriorityQueue<Map.Entry<Double, String>> pq = new PriorityQueue<>(numNeighbors, Map.Entry.comparingByKey(Comparator.reverseOrder()));
-              for (List<String> star : stars) {
-                if (!digit && star.get(1).equals(name)) { // don't factor in same star
-                  continue;
-                }
-                Double distance = Math.sqrt(Math.pow(Double.parseDouble(star.get(2)) - origin[0], 2) + Math.pow(Double.parseDouble(star.get(3)) - origin[1], 2) + Math.pow(Double.parseDouble(star.get(4)) - origin[2], 2));
 
-                if (pq.size() == numNeighbors) {
-                  Map.Entry<Double, String> last = pq.poll();
-                  if (last.getKey() > distance) { // if new star is less
-                    Map.Entry<Double, String> entry = Map.entry(distance, star.get(0));
-                    pq.add(entry);
-                  } else if (last.getKey() == distance) { // if equal
-                    int rand = (int) (Math.random() * 2 + 1);
-                    if (rand == 1) {
-                      pq.add(last);
-                    } else {
-                      Map.Entry<Double, String> entry = Map.entry(distance, star.get(0));
-                      pq.add(entry);
-                    }
-                  } else { // if new star is more
-                    pq.add(last);
-                  }
-                } else {
-                  Map.Entry<Double, String> entry = Map.entry(distance, star.get(0));
-                  pq.add(entry);
-                }
-              }
-              Iterator<Map.Entry<Double, String>> itr = pq.iterator();
-              while (itr.hasNext()) {
-                Map.Entry<Double, String> entry = itr.next();
-                System.out.println(entry.getValue());
-              }
+              this.getClosestNeighbors(stars, numNeighbors, origin, name, digit);
               break;
             default:
-              System.out.println("ERROR: Invalid input for REPL");
+              System.out.println("ERROR: Invalid command");
               break;
           }
 
@@ -182,6 +144,74 @@ public final class Main {
       System.out.println("ERROR: Invalid input for REPL");
     }
 
+  }
+
+  private ArrayList<Star> populateStars(String filename) {
+    try {
+      ArrayList<Star> stars = new ArrayList<>(); // reset stars
+      BufferedReader reader = new BufferedReader(new FileReader(filename));
+      reader.readLine(); // to skip the property names
+      String line;
+      int count = 0; // keep track of how many stars we read
+      while ((line = reader.readLine()) != null) { // read each line
+        String[] values = line.split(",");
+        if (values.length != 5) {
+          System.out.println("ERROR: Invalid input for REPL");
+          continue;
+        }
+        count++;
+        // create a new star based on csv values
+        Star star = new Star(values[0], values[1], Double.parseDouble(values[2]), Double.parseDouble(values[3]), Double.parseDouble(values[4]));
+        stars.add(star);
+      }
+      System.out.println("Read " + count + " stars from " + filename);
+      return stars;
+    } catch (Exception e) {
+      System.out.println("ERROR: Invalid filename");
+    }
+  }
+
+  private void getClosestNeighbors(List<Star> stars, int numNeighbors, Double[] origin, String name, Boolean digit) {
+    PriorityQueue<Map.Entry<Double, String>> pq = new PriorityQueue<>(numNeighbors, Map.Entry.comparingByKey(Comparator.reverseOrder()));
+    for (Star star : stars) {
+      if (!digit && star.getName().equals(name)) { // don't factor in same star
+        continue;
+      }
+      Double distance = star.calcDist(origin[0], origin[1], origin[2]);
+
+      if (pq.size() == numNeighbors) {
+        Map.Entry<Double, String> last = pq.poll();
+        if (last.getKey() > distance) { // if new star is less
+          Map.Entry<Double, String> entry = Map.entry(distance, star.getId());
+          pq.add(entry);
+        } else if (last.getKey() == distance) { // if equal
+          int rand = (int) (Math.random() * 2 + 1);
+          if (rand == 1) {
+            pq.add(last);
+          } else {
+            Map.Entry<Double, String> entry = Map.entry(distance, star.getId());
+            pq.add(entry);
+          }
+        } else { // if new star is more
+          pq.add(last);
+        }
+      } else {
+        Map.Entry<Double, String> entry = Map.entry(distance, star.getId());
+        pq.add(entry);
+      }
+    }
+    Iterator<Map.Entry<Double, String>> itr = pq.iterator();
+    ArrayList<Integer> ids = new ArrayList<>();
+    while (itr.hasNext()) {
+      Map.Entry<Double, String> entry = itr.next();
+      ids.add(Integer.parseInt(entry.getValue()));
+
+    }
+    Collections.sort(ids);
+
+    for (int id : ids) {
+      System.out.println(id);
+    }
   }
 
   private static FreeMarkerEngine createEngine() {
